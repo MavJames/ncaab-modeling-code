@@ -1,6 +1,0 @@
-beautifulsoup4
-pandas
-openpyxl
-lxml
-sportsipy
-cbbpy

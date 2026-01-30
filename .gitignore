@@ -39,6 +39,9 @@ wheels/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Intermediate scratch area (keep notebooks but ignore in git)
+NCAAB_Sports_Reference_Scraper/intermediate/
+
 # IDE
 .vscode/
 .idea/
