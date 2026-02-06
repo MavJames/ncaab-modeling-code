@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import pickle
 from typing import Iterable, Optional
 
 import numpy as np
@@ -258,11 +259,29 @@ def save_predictions(pred_df: pd.DataFrame, output_path: str | Path) -> Path:
     return output_path
 
 
+def save_model_bundle(model_bundle: ModelBundle, output_path: str | Path) -> Path:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("wb") as handle:
+        pickle.dump(model_bundle, handle)
+    return output_path
+
+
+def load_model_bundle(model_path: str | Path) -> ModelBundle:
+    model_path = Path(model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model bundle not found: {model_path}")
+    with model_path.open("rb") as handle:
+        return pickle.load(handle)
+
+
 def run_modeling_pipeline(
     *,
     training_path: Optional[str | Path] = None,
     features_path: Optional[str | Path] = None,
     predictions_path: Optional[str | Path] = None,
+    model_path: Optional[str | Path] = None,
+    save_model: bool = True,
     seasons_train: Iterable[int] = (2023, 2024, 2025),
     season_test: int = 2026,
     hca_alpha: float = 5.0,
@@ -283,6 +302,12 @@ def run_modeling_pipeline(
         residual_features=residual_features,
     )
 
+    if save_model:
+        if model_path is None:
+            base_dir = _resolve_base_dir()
+            model_path = base_dir / "data" / "model_bundle.pkl"
+        save_model_bundle(results.model_bundle, model_path)
+
     if features_path is None:
         base_dir = _resolve_base_dir()
         features_path = (
@@ -297,6 +322,36 @@ def run_modeling_pipeline(
 
     if predictions_path is None:
         base_dir = _resolve_base_dir()
+        predictions_path = base_dir / "data" / "predictions.csv"
+
+    return save_predictions(pred_df, predictions_path)
+
+
+def run_predictions_only(
+    *,
+    features_path: Optional[str | Path] = None,
+    model_path: Optional[str | Path] = None,
+    predictions_path: Optional[str | Path] = None,
+    season_test: int = 2026,
+    favorites_only: bool = True,
+) -> Path:
+    """Load a saved model bundle and refresh predictions without retraining."""
+    base_dir = _resolve_base_dir()
+
+    if model_path is None:
+        model_path = base_dir / "data" / "model_bundle.pkl"
+
+    if features_path is None:
+        features_path = base_dir / "data" / str(season_test) / f"features_{season_test}.csv"
+
+    model_bundle = load_model_bundle(model_path)
+    features_df = load_features(features_path)
+    pred_df = predict_from_features(features_df, model_bundle=model_bundle)
+
+    if favorites_only:
+        pred_df = build_favorites_predictions(pred_df)
+
+    if predictions_path is None:
         predictions_path = base_dir / "data" / "predictions.csv"
 
     return save_predictions(pred_df, predictions_path)

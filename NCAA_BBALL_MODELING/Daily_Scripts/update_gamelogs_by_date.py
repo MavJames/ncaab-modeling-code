@@ -55,7 +55,7 @@ def clean_gamelogs(df, rename_map=RENAME_MAP):
 
 
 def update_gamelogs_for_date(
-    input_path, output_path, target_date, season, sleep_seconds=6
+    input_path, output_path, target_date, season, sleep_seconds=6, max_teams=None
 ):
     df = pd.read_excel(input_path, index_col=False)
     df["date"] = pd.to_datetime(df["date"]).dt.normalize()
@@ -67,6 +67,10 @@ def update_gamelogs_for_date(
     if teams_today.empty:
         print(f"No teams found for {target_date.date()} in {input_path}")
         return
+
+    if max_teams is not None:
+        teams_today = teams_today.head(max_teams)
+        print(f"Checker mode: scraping first {len(teams_today)} teams for {target_date.date()}")
 
     updated_rows = []
     for i, row in teams_today.reset_index(drop=True).iterrows():
@@ -118,6 +122,12 @@ def main():
         default=None,
         help="Path to the output gamelogs xlsx.",
     )
+    parser.add_argument(
+        "--max-teams",
+        type=int,
+        default=None,
+        help="Only update first N teams found on --date (checker mode).",
+    )
     args = parser.parse_args()
 
     base_dir = Path(__file__).resolve().parent
@@ -139,6 +149,7 @@ def main():
         output_path=output_path,
         target_date=args.date,
         season=args.season,
+        max_teams=args.max_teams,
     )
 
 

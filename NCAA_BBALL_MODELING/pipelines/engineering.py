@@ -14,6 +14,7 @@ def update_gamelogs(
     season: int = 2026,
     input_path: Optional[str | Path] = None,
     output_path: Optional[str | Path] = None,
+    max_teams: Optional[int] = None,
 ) -> None:
     """Update gamelogs for a specific date (YYYY-MM-DD)."""
     utils.update_gamelogs_by_date(
@@ -21,6 +22,7 @@ def update_gamelogs(
         season=season,
         input_path=input_path,
         output_path=output_path,
+        max_teams=max_teams,
     )
 
 
@@ -42,12 +44,17 @@ def run_engineering(
     run_update: bool = True,
     run_features: bool = True,
     base_dir: Optional[str | Path] = None,
+    max_teams: Optional[int] = None,
 ) -> Optional[Path]:
     """Run engineering steps separately or together."""
     if run_update:
         if not target_date:
             raise ValueError("target_date is required when run_update=True")
-        update_gamelogs(target_date=target_date, season=season)
+        update_gamelogs(
+            target_date=target_date,
+            season=season,
+            max_teams=max_teams,
+        )
 
     if run_features:
         return create_features(only_season=season, base_dir=base_dir)

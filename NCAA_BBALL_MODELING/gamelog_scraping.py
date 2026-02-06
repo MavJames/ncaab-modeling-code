@@ -2,25 +2,70 @@
 # coding: utf-8
 
 from bs4 import BeautifulSoup
-from urllib.request import urlopen
-from urllib.error import HTTPError
-from http.client import IncompleteRead
 import pandas as pd
+import requests
+from random import uniform
 from time import sleep
 from pathlib import Path
+
+
+def _normalize_text(value: str) -> str:
+    if value is None:
+        return value
+    # Fix common mojibake for en dash and normalize to simple hyphen.
+    return (
+        str(value)
+        .replace("â", "–")
+        .replace("–", "-")
+    )
+
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+
+session = requests.Session()
+session.headers.update(HEADERS)
+
+
+# Function to prevent rate limiting and transient connection failures
+def fetch_page_safe(url, label=""):
+    max_retries = 3
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException:
+            if attempt == max_retries:
+                break
+            wait_time = uniform(6, 12) * attempt
+            print(f"⚠️ Connection issue {label}, waiting {int(wait_time)}s")
+            sleep(wait_time)
+
+    return None
 
 
 # GET SCHOOLS
 def get_schools(year):
     url = "https://www.sports-reference.com/cbb/seasons/" + str(year) + "-school-stats.html"
-    page = urlopen(url).read()
+    page = fetch_page_safe(url, f"season {year} school list")
+    if page is None:
+        print(f"❌ Could not fetch school list for {year}")
+        return {}
+
     soup = BeautifulSoup(page, features="lxml")
 
     table = soup.find("tbody")
     school_dict = {}
 
     for row in table.find_all("td", {"data-stat": "school_name"}):
-        school_name = row.get_text(strip=True)
+        school_name = _normalize_text(row.get_text(strip=True))
         a = row.find("a", href=True)
         if not a:
             continue
@@ -33,38 +78,6 @@ def get_schools(year):
 
 
  
-# Function to prevent rate limiting
-def fetch_page_safe(url, school):
-    max_retries = 3
-    retry_count = 0
-    page = None
-
-    while retry_count < max_retries and page is None:
-        try:
-            page = urlopen(url).read()
-        except HTTPError as e:
-            if e.code == 429:
-                retry_count += 1
-                wait_time = 10 * retry_count  # 10s, 20s, 30s
-                print(
-                    f"⏳ Rate limited for {school}. "
-                    f"Waiting {wait_time}s (retry {retry_count}/{max_retries})..."
-                )
-                sleep(wait_time)
-            else:
-                raise
-        except IncompleteRead:
-            retry_count += 1
-            wait_time = 5 * retry_count
-            print(
-                f"⚠️ Incomplete read for {school}. "
-                f"Retrying in {wait_time}s (retry {retry_count}/{max_retries})..."
-            )
-            sleep(wait_time)
-
-    return page
-
-
 # --------------------------------------------------
 # SCRAPE ONE TEAM GAMELOG
 # --------------------------------------------------
@@ -114,7 +127,7 @@ def scrape_team_gamelog(team_slug, year, school_name):
             for cell in row.find_all(["th", "td"]):
                 stat = cell.get("data-stat")
                 if stat:
-                    game[stat] = cell.get_text(strip=True)
+                    game[stat] = _normalize_text(cell.get_text(strip=True))
             games.append(game)
             continue
 
@@ -132,7 +145,7 @@ def scrape_team_gamelog(team_slug, year, school_name):
             for cell in row.find_all(["th", "td"]):
                 stat = cell.get("data-stat")
                 if stat:
-                    game[stat] = cell.get_text(strip=True)
+                    game[stat] = _normalize_text(cell.get_text(strip=True))
             games.append(game)
             future_added = True
     return games
