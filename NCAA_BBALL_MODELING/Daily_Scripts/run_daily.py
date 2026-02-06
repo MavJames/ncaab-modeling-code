@@ -43,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         "--predictions-path",
         help="Output path for predictions CSV (defaults to data/predictions.csv).",
     )
+    parser.add_argument(
+        "--max-teams",
+        type=int,
+        help="Only update first N teams found on --date (checker mode).",
+    )
 
     return parser.parse_args()
 
@@ -61,6 +66,7 @@ def main() -> None:
         season=args.season,
         run_update=run_update,
         run_features=run_features,
+        max_teams=args.max_teams,
     )
 
     if args.run_modeling:

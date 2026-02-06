@@ -1,12 +1,7 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from time import sleep
 
-try:
-    from .gamelog_scraping import scrape_team_gamelog
-except ImportError:
-    from gamelog_scraping import scrape_team_gamelog
 
 RENAME_MAP = {
     "Texas A&M–Commerce": "East Texas A&M",
@@ -33,21 +28,6 @@ RENAME_MAP = {
     "SMU": "Southern Methodist",
     "VCU": "Virginia Commonwealth",
 }
-
-
-def clean_names_gamelogs(df, rename_map=RENAME_MAP):
-    df = df.copy()
-    df["school_name"] = df["school_name"].str.replace(r"NCAA$", "", regex=True)
-    df["opp_name_abbr"] = df["opp_name_abbr"].replace(rename_map)
-
-    valid_schools = set(df["school_name"].unique())
-    df = df[df["opp_name_abbr"].isin(valid_schools)]
-    return df
-
-def clean_school_names(df):
-    df = df.copy()
-    df["school_name"] = df["school_name"].str.replace(r"NCAA$", "", regex=True)
-    return df
 
 
 def clean_gamelogs(df, rename_map=RENAME_MAP):
@@ -82,9 +62,9 @@ def add_features(df):
     df["net_rtg"] = df["off_rtg"] - df["def_rtg"]
 
     # Cumulative ratings up to prior game
-    cum_pts = g["team_game_score"].transform(lambda s: s.shift(1).cumsum())
-    cum_opp_pts = g["opp_team_game_score"].transform(lambda s: s.shift(1).cumsum())
-    cum_poss = g["possessions"].transform(lambda s: s.shift(1).cumsum())
+    cum_pts = g["team_game_score"].cumsum().shift(1)
+    cum_opp_pts = g["opp_team_game_score"].cumsum().shift(1)
+    cum_poss = g["possessions"].cumsum().shift(1)
 
     df["cum_off_rtg"] = 100 * (cum_pts / cum_poss)
     df["cum_def_rtg"] = 100 * (cum_opp_pts / cum_poss)
@@ -93,58 +73,6 @@ def add_features(df):
     df["cum_off_rtg"] = df["cum_off_rtg"].fillna(0)
     df["cum_def_rtg"] = df["cum_def_rtg"].fillna(0)
     df["cum_net_rtg"] = df["cum_net_rtg"].fillna(0)
-
-    # Cumulative ratings home and away
-    is_home = df["is_Home"] == 1
-    is_away = df["is_Home"] == 0
-
-    home_pts = (
-        df.loc[is_home]
-        .groupby(["season", "school_name"])["team_game_score"]
-        .transform(lambda s: s.shift(1).cumsum())
-    )
-    home_opp_pts = (
-        df.loc[is_home]
-        .groupby(["season", "school_name"])["opp_team_game_score"]
-        .transform(lambda s: s.shift(1).cumsum())
-    )
-    home_poss = (
-        df.loc[is_home]
-        .groupby(["season", "school_name"])["possessions"]
-        .transform(lambda s: s.shift(1).cumsum())
-    )
-
-    away_pts = (
-        df.loc[is_away]
-        .groupby(["season", "school_name"])["team_game_score"]
-        .transform(lambda s: s.shift(1).cumsum())
-    )
-    away_opp_pts = (
-        df.loc[is_away]
-        .groupby(["season", "school_name"])["opp_team_game_score"]
-        .transform(lambda s: s.shift(1).cumsum())
-    )
-    away_poss = (
-        df.loc[is_away]
-        .groupby(["season", "school_name"])["possessions"]
-        .transform(lambda s: s.shift(1).cumsum())
-    )
-
-    df["home_cum_net_rtg"] = 0.0
-    df["away_cum_net_rtg"] = 0.0
-
-    df.loc[is_home, "home_cum_net_rtg"] = 100 * (home_pts / home_poss) - 100 * (
-        home_opp_pts / home_poss
-    )
-    df.loc[is_away, "away_cum_net_rtg"] = 100 * (away_pts / away_poss) - 100 * (
-        away_opp_pts / away_poss
-    )
-
-    df[["home_cum_net_rtg", "away_cum_net_rtg"]] = df[
-        ["home_cum_net_rtg", "away_cum_net_rtg"]
-    ].fillna(0)
-
-    df["home_road_split"] = df["home_cum_net_rtg"] - df["away_cum_net_rtg"]
 
     # Rolling helper
     def roll_mean(col, window):
@@ -192,7 +120,6 @@ def add_features(df):
         "team_game_score",
         "opp_team_game_score",
         "score_diff",
-        "possessions",
     ]
     for col in roll_cols:
         df[f"avg_{col}_last_5"] = roll_mean(col, 5)
@@ -240,14 +167,6 @@ def add_opponent_features(all_df):
         "avg_opp_team_game_score_last_10",
         "avg_score_diff_last_5",
         "avg_score_diff_last_10",
-        "avg_possessions_last_5",
-        "avg_possessions_last_10",
-        "cum_off_rtg",
-        "cum_def_rtg",
-        "cum_net_rtg",
-        "home_cum_net_rtg",
-        "away_cum_net_rtg",
-        "home_road_split",
     ]
 
     opp_df = df[opp_cols].add_prefix("opp_")
@@ -261,8 +180,7 @@ def add_opponent_features(all_df):
     )
 
     merged["avg_score_comp_last_10"] = (
-        merged["avg_team_game_score_last_10"]
-        - merged["opp_avg_team_game_score_last_10"]
+        merged["avg_team_game_score_last_10"] - merged["opp_avg_team_game_score_last_10"]
     )
     merged["efg_comp_last_10"] = (
         merged["efg_pct_last_10"] - merged["opp_efg_pct_last_10"]
@@ -277,91 +195,88 @@ def add_opponent_features(all_df):
         merged["avg_fta_last_10"] - merged["opp_avg_fta_last_10"]
     )
     merged["rest_days_comp"] = merged["rest_days"] - merged["opp_rest_days"]
-    merged["net_rtg_comp"] = merged["cum_net_rtg"] - merged["opp_cum_net_rtg"]
-    merged["home_road_split_comp"] = merged["home_road_split"] - merged["opp_home_road_split"]
-    merged["pace_mismatch_signed"] = merged["avg_possessions_last_10"] - merged["opp_avg_possessions_last_10"]
-    merged["net_rtg_home_interaction"] = merged["net_rtg_comp"] * merged["is_Home"]
-    
 
     merged = merged.dropna(subset=["avg_score_comp_last_10"])
 
     return merged
 
-
 def calculate_possessions(df):
     """
     Calculate possessions using the accurate formula.
-
+    
     Formula: 0.5 * (Team_Poss + Opp_Poss)
-
+    
     Where:
     Poss = FGA + 0.4*FTA - 1.07*(ORB/(ORB+Opp_DRB))*(FGA-FG) + TOV
     """
-
+    
     # Team possessions
-    team_orb_pct = df["orb"] / (df["orb"] + df["opp_drb"])
-    team_missed_fg = df["fga"] - df["fg"]
+    team_orb_pct = df['orb'] / (df['orb'] + df['opp_drb'])
+    team_missed_fg = df['fga'] - df['fg']
     team_orb_adjustment = 1.07 * team_orb_pct * team_missed_fg
-
-    team_poss = df["fga"] + 0.4 * df["fta"] - team_orb_adjustment + df["tov"]
-
-    # Opponent possessions
-    opp_orb_pct = df["opp_orb"] / (df["opp_orb"] + df["drb"])
-    opp_missed_fg = df["opp_fga"] - df["opp_fg"]
-    opp_orb_adjustment = 1.07 * opp_orb_pct * opp_missed_fg
-
-    opp_poss = (
-        df["opp_fga"] + 0.4 * df["opp_fta"] - opp_orb_adjustment + df["opp_tov"]
+    
+    team_poss = (
+        df['fga'] + 
+        0.4 * df['fta'] - 
+        team_orb_adjustment + 
+        df['tov']
     )
-
+    
+    # Opponent possessions
+    opp_orb_pct = df['opp_orb'] / (df['opp_orb'] + df['drb'])
+    opp_missed_fg = df['opp_fga'] - df['opp_fg']
+    opp_orb_adjustment = 1.07 * opp_orb_pct * opp_missed_fg
+    
+    opp_poss = (
+        df['opp_fga'] + 
+        0.4 * df['opp_fta'] - 
+        opp_orb_adjustment + 
+        df['opp_tov']
+    )
+    
     # Average of both
-    df["possessions"] = 0.5 * (team_poss + opp_poss)
-    df["team_possessions"] = team_poss
-    df["opp_possessions"] = opp_poss
-
+    df['possessions'] = 0.5 * (team_poss + opp_poss)
+    df['team_possessions'] = team_poss
+    df['opp_possessions'] = opp_poss
+    
     return df
 
 
 def _resolve_base_dir():
     try:
-        base_dir = Path(__file__).resolve().parent
+        base_dir = Path(__file__).resolve().parents[1]
     except NameError:
         base_dir = Path.cwd()
 
-    if base_dir.name == "Daily Scripts" or base_dir.name == "Daily_Scripts":
-        base_dir = base_dir.parent
     if base_dir.name == "data":
-        base_dir = base_dir.parent
-    if not (base_dir / "data").exists() and (base_dir / "NCAAB_Sports_Reference_Scraper").exists():
-        base_dir = base_dir / "NCAAB_Sports_Reference_Scraper"
+        return base_dir.parent
     return base_dir
 
 
-def create_features(only_season=None, base_dir=None):
+def main(only_season=None, base_dir=None):
     base_dir = Path(base_dir) if base_dir is not None else _resolve_base_dir()
     data_dir = base_dir / "data"
 
     if only_season == 2026:
         all_df = pd.read_excel(
-            data_dir / "2026" / "NCAAB_2026_Team_Gamelogs_now.xlsx", index_col=False
+            data_dir / "2026" / "NCAAB_2026_Team_Gamelogs_updated.xlsx", index_col=False
         )
     else:
         df_2023 = pd.read_csv(data_dir / "2023" / "gamelogs_2023.csv", index_col=False)
         df_2024 = pd.read_csv(data_dir / "2024" / "gamelogs_2024.csv", index_col=False)
         df_2025 = pd.read_csv(data_dir / "2025" / "gamelogs_2025.csv", index_col=False)
         df_2026 = pd.read_excel(
-            data_dir / "2026" / "NCAAB_2026_Team_Gamelogs_now.xlsx",
-            index_col=False,
+            data_dir / "2026" / "NCAAB_2026_Team_Gamelogs_updated.xlsx", index_col=False
         )
         all_df = pd.concat([df_2023, df_2024, df_2025, df_2026], ignore_index=True)
 
     clean_df = clean_gamelogs(all_df)
-    merged_df = calculate_possessions(clean_df)
-    added_df = add_features(merged_df)
+    added_df = add_features(clean_df)
     merged_df = add_opponent_features(added_df)
+    merged_df = calculate_possessions(merged_df)
 
     output_path = (
-        data_dir / "2026" / "features_2026.csv"
+        data_dir / "2026" / "features_2026_new.csv"
         if only_season == 2026
         else data_dir / "merged_dataset.csv"
     )
@@ -369,70 +284,5 @@ def create_features(only_season=None, base_dir=None):
     print(f"Saved: {output_path}")
 
 
-def update_gamelogs_for_date(
-    input_path, output_path, target_date, season, sleep_seconds=6, max_teams=None
-):
-    df = pd.read_excel(input_path, index_col=False)
-    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
-
-    target_date = pd.to_datetime(target_date).normalize()
-    teams_today = df.loc[df["date"] == target_date, ["school_slug", "school_name"]]
-    teams_today = teams_today.dropna().drop_duplicates()
-
-    if teams_today.empty:
-        print(f"No teams found for {target_date.date()} in {input_path}")
-        return
-
-    if max_teams is not None:
-        teams_today = teams_today.head(max_teams)
-        print(f"Checker mode: scraping first {len(teams_today)} teams for {target_date.date()}")
-
-    updated_rows = []
-    for i, row in teams_today.reset_index(drop=True).iterrows():
-        slug = row["school_slug"]
-        name = row["school_name"]
-        print(f"{i + 1}/{len(teams_today)}  Updating {slug}")
-        updated_rows.extend(scrape_team_gamelog(slug, season, name))
-        sleep(sleep_seconds)
-
-    updated_df = pd.DataFrame(updated_rows)
-    if updated_df.empty:
-        print("No updated rows scraped; leaving file unchanged.")
-        return
-
-    # Replace rows for updated teams in this season with fresh scrape
-    updated_slugs = set(teams_today["school_slug"].tolist())
-    keep_mask = ~(
-        (df["season"] == season) & (df["school_slug"].isin(updated_slugs))
-    )
-    merged = pd.concat([df[keep_mask], updated_df], ignore_index=True)
-    merged = clean_gamelogs(merged)
-
-    merged.to_excel(output_path, index=False)
-    print(f"Saved: {output_path}")
-
-
-def update_gamelogs_by_date(
-    target_date, season=2026, input_path=None, output_path=None, max_teams=None
-):
-    base_dir = _resolve_base_dir()
-    data_dir = base_dir / "data" / str(season)
-
-    input_path = (
-        Path(input_path)
-        if input_path
-        else data_dir / f"NCAAB_{season}_Team_Gamelogs_now.xlsx"
-    )
-    output_path = (
-        Path(output_path)
-        if output_path
-        else data_dir / f"NCAAB_{season}_Team_Gamelogs_now.xlsx"
-    )
-
-    update_gamelogs_for_date(
-        input_path=input_path,
-        output_path=output_path,
-        target_date=target_date,
-        season=season,
-        max_teams=max_teams,
-    )
+if __name__ == "__main__":
+    main()
